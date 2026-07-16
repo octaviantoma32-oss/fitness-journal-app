@@ -354,6 +354,7 @@ const POLL_INTERVAL_MS = 4000;
 // ───────────────────────────────────────────────────────────────────
 
 let shows = [];
+let isSyncing = false;
 
 function cryptoId(){
   return 'id-' + Math.random().toString(36).slice(2,10);
@@ -377,10 +378,15 @@ async function loadShows(){
     setSyncStatus('error');
     return;
   }
+  // Don't let a poll clobber an edit that's still being saved.
+  if(isSyncing) return;
   try{
-    const res = await fetch(NPOINT_URL);
-    if(!res.ok) throw new Error('bad response');
+    const res = await fetch(NPOINT_URL, {cache:'no-store'});
+    if(!res.ok) throw new Error('bad response: ' + res.status);
     const data = await res.json();
+    // A save may have started while this request was in flight — if so,
+    // skip applying this (now-stale) result rather than overwrite it.
+    if(isSyncing) return;
     shows = Array.isArray(data) ? data : [];
     setSyncStatus('idle');
     rebuildSeriesLibrary();
@@ -394,17 +400,22 @@ async function loadShows(){
 
 async function saveShows(){
   if(!isConfigured()) return;
+  isSyncing = true;
   setSyncStatus('saving');
   try{
-    await fetch(NPOINT_URL, {
+    const res = await fetch(NPOINT_URL, {
       method: 'PUT',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(shows)
+      body: JSON.stringify(shows),
+      cache: 'no-store'
     });
+    if(!res.ok) throw new Error('save failed: ' + res.status);
     setSyncStatus('idle');
   }catch(err){
     console.error('Could not save schedule', err);
     setSyncStatus('error');
+  }finally{
+    isSyncing = false;
   }
 }
 
