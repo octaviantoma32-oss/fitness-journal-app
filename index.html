@@ -294,8 +294,8 @@
   </header>
 
   <div class="setup-banner hidden" id="setup-banner">
-    Shared storage isn't set up yet — open the file and set <code>NPOINT_URL</code> near the top of the script.
-    See the comment right above it for a 30-second setup.
+    Shared storage isn't set up yet — open the file and set <code>JSONBIN_API_KEY</code> and <code>JSONBIN_BIN_ID</code> near the top of the script.
+    See the comment right above them for a quick setup guide.
   </div>
 
   <div class="add-panel">
@@ -341,15 +341,20 @@ const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const DAY_LABELS = {Mon:"Monday",Tue:"Tuesday",Wed:"Wednesday",Thu:"Thursday",Fri:"Friday",Sat:"Saturday",Sun:"Sunday"};
 const todayIdx = (new Date().getDay() + 6) % 7; // Mon=0
 
-// ── SHARED STORAGE SETUP ──────────────────────────────────────────
-// 1. Go to https://www.npoint.io  →  click "Create your first bin"
-// 2. Delete the placeholder JSON it gives you and paste: []
-// 3. Click Save, then copy the URL shown at the top (looks like
-//    https://api.npoint.io/a1b2c3d4e5f6g7h8i9j0)
-// 4. Paste that URL below, replacing the placeholder.
-// 5. Send the SAME finished HTML file (with your URL already in it)
-//    to your friend — that's what makes you both point at one schedule.
-const NPOINT_URL = "https://api.npoint.io/24f4eb7cd77eb2e4c754";
+// ── SHARED STORAGE SETUP (jsonbin.io) ─────────────────────────────
+// 1. Go to https://jsonbin.io and create a free account.
+// 2. Open "API Keys" in the dashboard and copy your X-Master-Key.
+// 3. Create a new Bin, set its content to exactly:  {"shows": []}
+//    (jsonbin's dashboard rejects a bare "[]" as an empty bin, so it
+//    needs to be wrapped in an object like this).
+//    Save it, then copy the Bin ID (shown in the bin's URL / details).
+// 4. Paste both values into the two constants below.
+// 5. Send the SAME finished HTML file (with your key + ID already
+//    filled in) to your friend — that's what makes you both point
+//    at one shared schedule.
+const JSONBIN_API_KEY = "$2a$10$6TQk16Hp.QPRSGWmFvs9EOjjLlGwG0kHsIi0htpjLYP.ynmjozUay";
+const JSONBIN_BIN_ID = "6a5933f4f5f4af5e2999499b";
+const JSONBIN_URL = "https://api.jsonbin.io/v3/b/" + JSONBIN_BIN_ID;
 const POLL_INTERVAL_MS = 4000;
 // ───────────────────────────────────────────────────────────────────
 
@@ -369,7 +374,8 @@ function setSyncStatus(state){
 }
 
 function isConfigured(){
-  return NPOINT_URL && !NPOINT_URL.includes('REPLACE_WITH_YOUR_BIN_URL');
+  return JSONBIN_API_KEY && !JSONBIN_API_KEY.includes('REPLACE_WITH_YOUR_X_MASTER_KEY')
+    && JSONBIN_BIN_ID && !JSONBIN_BIN_ID.includes('REPLACE_WITH_YOUR_BIN_ID');
 }
 
 async function loadShows(){
@@ -381,13 +387,19 @@ async function loadShows(){
   // Don't let a poll clobber an edit that's still being saved.
   if(isSyncing) return;
   try{
-    const res = await fetch(NPOINT_URL, {cache:'no-store'});
+    const res = await fetch(JSONBIN_URL + '/latest', {
+      headers: {
+        'X-Master-Key': JSONBIN_API_KEY,
+        'X-Bin-Meta': 'false'
+      },
+      cache: 'no-store'
+    });
     if(!res.ok) throw new Error('bad response: ' + res.status);
     const data = await res.json();
     // A save may have started while this request was in flight — if so,
     // skip applying this (now-stale) result rather than overwrite it.
     if(isSyncing) return;
-    shows = Array.isArray(data) ? data : [];
+    shows = Array.isArray(data && data.shows) ? data.shows : [];
     setSyncStatus('idle');
     rebuildSeriesLibrary();
     populateSeriesDropdown();
@@ -403,10 +415,13 @@ async function saveShows(){
   isSyncing = true;
   setSyncStatus('saving');
   try{
-    const res = await fetch(NPOINT_URL, {
+    const res = await fetch(JSONBIN_URL, {
       method: 'PUT',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(shows),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Master-Key': JSONBIN_API_KEY
+      },
+      body: JSON.stringify({ shows: shows }),
       cache: 'no-store'
     });
     if(!res.ok) throw new Error('save failed: ' + res.status);
