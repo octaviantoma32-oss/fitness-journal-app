@@ -143,6 +143,29 @@
     margin-top:4px;
     font-family:'JetBrains Mono',monospace;
   }
+  .sync-status{
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;
+    color:var(--green);
+    white-space:nowrap;
+  }
+  .sync-status.saving{color:var(--amber);}
+  .sync-status.error{color:var(--red);}
+  .setup-banner{
+    background:var(--amber-dim);
+    border:1px solid var(--amber);
+    color:var(--amber);
+    font-size:12.5px;
+    padding:10px 14px;
+    border-radius:8px;
+    margin-bottom:20px;
+    line-height:1.5;
+  }
+  .setup-banner code{
+    background:rgba(0,0,0,0.25);
+    padding:1px 5px;
+    border-radius:4px;
+  }
 
   /* guide grid */
   .guide{
@@ -264,8 +287,16 @@
         <div class="tagline">Your weekly line-up, series by series</div>
       </div>
     </div>
-    <div class="clock" id="clock"></div>
+    <div style="display:flex;align-items:center;gap:14px;">
+      <span class="sync-status" id="sync-status">● synced</span>
+      <div class="clock" id="clock"></div>
+    </div>
   </header>
+
+  <div class="setup-banner hidden" id="setup-banner">
+    Shared storage isn't set up yet — open the file and set <code>NPOINT_URL</code> near the top of the script.
+    See the comment right above it for a 30-second setup.
+  </div>
 
   <div class="add-panel">
     <h2>Add to schedule</h2>
@@ -310,14 +341,71 @@ const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const DAY_LABELS = {Mon:"Monday",Tue:"Tuesday",Wed:"Wednesday",Thu:"Thursday",Fri:"Friday",Sat:"Saturday",Sun:"Sunday"};
 const todayIdx = (new Date().getDay() + 6) % 7; // Mon=0
 
-let shows = [
-  {id: cryptoId(), title:"Severance", day:"Thu", time:"21:00", episode:"S02E01", watched:false},
-  {id: cryptoId(), title:"The Bear", day:"Sat", time:"19:30", episode:"S03E05", watched:true},
-  {id: cryptoId(), title:"Slow Horses", day:"Fri", time:"20:00", episode:"S04E02", watched:false},
-];
+// ── SHARED STORAGE SETUP ──────────────────────────────────────────
+// 1. Go to https://www.npoint.io  →  click "Create your first bin"
+// 2. Delete the placeholder JSON it gives you and paste: []
+// 3. Click Save, then copy the URL shown at the top (looks like
+//    https://api.npoint.io/a1b2c3d4e5f6g7h8i9j0)
+// 4. Paste that URL below, replacing the placeholder.
+// 5. Send the SAME finished HTML file (with your URL already in it)
+//    to your friend — that's what makes you both point at one schedule.
+const NPOINT_URL = "https://api.npoint.io/REPLACE_WITH_YOUR_BIN_URL";
+const POLL_INTERVAL_MS = 4000;
+// ───────────────────────────────────────────────────────────────────
+
+let shows = [];
 
 function cryptoId(){
   return 'id-' + Math.random().toString(36).slice(2,10);
+}
+
+function setSyncStatus(state){
+  const el = document.getElementById('sync-status');
+  el.classList.remove('saving','error');
+  if(state === 'saving'){ el.textContent = '● saving…'; el.classList.add('saving'); }
+  else if(state === 'error'){ el.textContent = '⚠ offline'; el.classList.add('error'); }
+  else { el.textContent = '● synced'; }
+}
+
+function isConfigured(){
+  return NPOINT_URL && !NPOINT_URL.includes('REPLACE_WITH_YOUR_BIN_URL');
+}
+
+async function loadShows(){
+  if(!isConfigured()){
+    document.getElementById('setup-banner').classList.remove('hidden');
+    setSyncStatus('error');
+    return;
+  }
+  try{
+    const res = await fetch(NPOINT_URL);
+    if(!res.ok) throw new Error('bad response');
+    const data = await res.json();
+    shows = Array.isArray(data) ? data : [];
+    setSyncStatus('idle');
+    rebuildSeriesLibrary();
+    populateSeriesDropdown();
+    render();
+  }catch(err){
+    console.error('Could not load shared schedule', err);
+    setSyncStatus('error');
+  }
+}
+
+async function saveShows(){
+  if(!isConfigured()) return;
+  setSyncStatus('saving');
+  try{
+    await fetch(NPOINT_URL, {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(shows)
+    });
+    setSyncStatus('idle');
+  }catch(err){
+    console.error('Could not save schedule', err);
+    setSyncStatus('error');
+  }
 }
 
 // --- series library: tracks the latest known episode per series so the
@@ -438,6 +526,7 @@ function render(){
       const s = shows.find(x => x.id === btn.dataset.id);
       s.watched = !s.watched;
       render();
+      saveShows();
     });
   });
   guide.querySelectorAll('[data-action="remove"]').forEach(btn=>{
@@ -446,6 +535,7 @@ function render(){
       rebuildSeriesLibrary();
       populateSeriesDropdown();
       render();
+      saveShows();
     });
   });
 }
@@ -491,6 +581,7 @@ document.getElementById('add-btn').addEventListener('click', () => {
   document.getElementById('ep-hint').innerHTML = '&nbsp;';
   newTitleInput.focus();
   render();
+  saveShows();
 });
 
 newTitleInput.addEventListener('keydown', (e) => {
@@ -506,9 +597,8 @@ function updateClock(){
 updateClock();
 setInterval(updateClock, 30000);
 
-rebuildSeriesLibrary();
-populateSeriesDropdown();
-render();
+loadShows();
+setInterval(loadShows, POLL_INTERVAL_MS);
 </script>
 </body>
 </html>
